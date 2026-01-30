@@ -1,0 +1,42 @@
+---
+title: "Methylation Micrroarray Randomization"
+author: "Samuel Prates dos Santos"
+date: "29/01/2026"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    number_sections: true
+    theme: darkly
+    highlight: zenburn
+    df_print: paged
+    code_folding: hide
+--- 
+
+``` {r load_library, include=FALSE}
+library(readxl)
+library(tidyverse)
+library(ggplot2)
+library(gridExtra)
+```
+
+# Setup Config
+
+``` {r setup}
+# File's path (change if necessary)
+file_name <- "Metiloma_CP_PlanilhaINCA(1).xlsx" # The name of the file
+folder <- "Planilhas" # Which folder the file is located
+file_path <- file.path(folder, file_name) # Concatenate file name + folder 
+num_col <- 5
+num_row <- 8
+```
+
+# Data Loading and Cleaning
+
+``` {r data_loading}
+data <- read_excel(file_path)
+selected_col <- "Estadiamento" # Choose what column you want selected
+data$Target <- data[[selected_col]]
+head(data)
+```
