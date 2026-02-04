@@ -1,0 +1,26 @@
+# Ignora as planilhas com dados de pacientes do INCA
+Spreadsheets/*.xlsx
+Spreadsheets/*.csv
+# Se tiver pastas com dados brutos de metilação (ex: .idat)
+*.idat
+*.RData
+*.Rhistory
+
+# --- Ficheiros do RStudio ---
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+.Rapp.history
+
+# --- Gestão de Pacotes (renv) ---
+# O renv recomenda ignorar a biblioteca de pacotes local, 
+# mas manter o arquivo 'activate.R' e 'renv.lock' (que já estão no seu commit)
+renv/library/
+renv/python/
+renv/staging/
+
+# --- Outputs de Relatórios ---
+# Geralmente não se sobe o HTML/PDF gerado, apenas o código .Rmd
+Scripts/*.html
+Scripts/*.pdf
