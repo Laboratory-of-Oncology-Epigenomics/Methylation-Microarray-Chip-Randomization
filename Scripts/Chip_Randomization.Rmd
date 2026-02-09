@@ -12,9 +12,9 @@ output:
     highlight: zenburn
     df_print: paged
     code_folding: hide
---- 
+---
 
-``` {r load_library, include=FALSE}
+```{r load_library, include=FALSE}
 library(readxl)
 library(tidyverse)
 library(ggplot2)
@@ -24,19 +24,19 @@ library(here)
 
 # Configuration
 
-``` {r setup}
+```{r setup}
 # File's path (change if necessary)
 file_path <- here("Spreadsheets", "Metiloma_CP_PlanilhaINCA.xlsx") # The order is Folder name + File name
 selected_col <- "Estadiamento" # Choose what column you want selected
-chip_cols <- 5 # How many columns will your chip have?
+chip_cols <- 6 # How many columns will your chip have?
 chip_rows <- 8 # How many rows will your chip have?
 cleaning_staging_column <- TRUE
 cleaning_sex_column <- FALSE
 ```
 
-# Data Loading and Cleaning
+# Data Wrangling
 
-``` {r data_loading}
+```{r data_loading}
 Data <- read_excel(file_path) # Reads the file, if it is a .csv file change read_excel to read.csv
 Data$Target <- Data[[selected_col]] # Creates a column named target that copies everthing that is in the selected_col
   if (cleaning_staging_column == TRUE) {
@@ -50,13 +50,46 @@ Data$Target <- Data[[selected_col]] # Creates a column named target that copies 
 } else if (cleaning_sex_column == TRUE) {
   Data <- Data %>% 
     mutate(
-  Target = str_extract(Target, regex("^[mf]", ignore_case = TRUE)), # Extracts nly the first letter of female and male
+  Target = str_extract(Target, regex("^[mf]", ignore_case = TRUE)), # Extracts nly the first letter of female or male
   Target = str_to_upper(Target) # Makes all letters uppercase
-)
+) else
+  Data <- Data %>% mutate(group_ID = row_number()) # Setting a group id to facilitate the tissue pairing 
 }
-table(Data$Target)
 ```
 
-``` {r test}
+```{r data_wrangling}
+Adjacent_Tissue <- Data %>%
+  mutate (
+    Pair_id = str_remove_all(Pareado, "\\s"), # Remove all spaces
+    Pair_id = str_extract(Pair_id, regex("\\d+cp-n", ignore_case = TRUE)) # Extract all normal tissues
+  ) %>%
+  filter(!is.na(Pair_id)) %>% # Filter only the CP-Ns, leaving the NAs behind
+  mutate(
+    Target= "Normal"
+  )
+  Data_Final <- bind_rows(Data, Adjacent_Tissue)
+```
+
+# Randomization Algorithm
+
+```{r randomization}
+set.seed(123)
+
+```
+
+# Results
+
+```{r Results, echo=FALSE}
+spots_per_chip <- chip_rows * chip_cols
+total_samples <- nrow(Randomized_Data)
+num_of_chips_needed <- ceiling(total_samples / spots_per_chip)
+empty_spots <- (num_of_chips_needed * spots_per_chip) - total_samples
+
+# Uncomment these lines if you want these informations in your doc
+# print(paste("Total amount of samples:", total_samples))
+# print(paste("Spots per chip:", spots_per_chip))
+# print(paste("Chips needed:", num_of_chips_needed))
+
+print(paste("!!!WARNING!!! Your last chip will have", empty_spots, "empty spots"))
 
 ```

@@ -28,7 +28,7 @@ library(gridExtra)
 file_name <- "Metiloma_CP_PlanilhaINCA(1).xlsx" # The name of the file
 folder <- "Planilhas" # Which folder the file is located
 caminho_arquivo <- file.path(folder, file_name) # Concatenate file name + folder 
-num_col <- 5
+num_col <- 6
 num_row <- 8
 ```
 
