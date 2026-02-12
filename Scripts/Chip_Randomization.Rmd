@@ -12,6 +12,8 @@ output:
     highlight: zenburn
     df_print: paged
     code_folding: hide
+params:
+  target_cols: ["Estadiamento", "Sexo"] #Change what columns you want to analyze
 ---
 
 ```{r load_library, include=FALSE}
@@ -21,58 +23,74 @@ library(ggplot2)
 library(gridExtra)
 library(here)
 ```
-
 # Configuration
 
 ```{r setup}
 # File's path (change if necessary)
 file_path <- here("Spreadsheets", "Metiloma_CP_PlanilhaINCA.xlsx") # The order is Folder name + File name
-selected_col <- "Estadiamento" # Choose what column you want selected
+selected_cols <- params$target_cols # Choose what column you want selected
 chip_cols <- 6 # How many columns will your chip have?
 chip_rows <- 8 # How many rows will your chip have?
 n_chips <- 1 # How many chips will you need?
-cleaning_staging_column <- TRUE
-cleaning_sex_column <- FALSE
+```
+***
+# Functions
+All of the code's functions reside here.
+```{r functions}
+validate_col <- function(file, target_col) {
+  if (!(target_col %in% colnames(file))) {
+    stop(paste("!!!ERROR!!! The selected column", target_col, "not found"))
+  }
+col_type <- class(file[[target_col]])
+if (any(col_type %in% c("character", "factor"))) {
+  message(paste("-SUCCESS-", target_col, "is a valid categorical column"))
+  return = TRUE
+} else {
+  warning(paste("!!!WARNING!!!", target_col, "is", col_type, "- expected character or factor"))
+  return = FALSE
+}
+}
+```
+
+***
+# Data Loading
+
+```{r data_loading}
+loaded_data <- read_excel(file_path)
+```
+***
+## Calculations
+```{r calculations}
 spots_per_chip <- chip_rows * chip_cols
-total_samples <- nrow(Data)
+total_samples <- nrow(loaded_data)
 num_of_chips_needed <- ceiling(total_samples / spots_per_chip)
 empty_spots <- (num_of_chips_needed * spots_per_chip) - total_samples
 
 # Uncomment these lines if you want these informations in your doc
-# print(paste("Total amount of samples:", total_samples))
-# print(paste("Spots per chip:", spots_per_chip))
-print(paste("The randomization will consider ", num_of_chips_needed,"chips"))
+# message(paste("Total amount of samples:", total_samples))
+# message(paste("Spots per chip:", spots_per_chip))
+message(paste("The randomization will consider", num_of_chips_needed,"chips"))
 
-print(paste("!!!WARNING!!! Your last chip will have", empty_spots, "empty spots"))
-
-
-```
-
-# Data Loading
-```{r data_loading}
-loaded_data <- read_excel(file_path)
+message(paste("!!!ATTENTION!!! Your last chip will have", empty_spots, "empty spots"))
 
 ```
-
-
+***
 # Data Wrangling
+
 ```{r data_wrangling}
-for selected_col[i] {
-  if selected_col[i] !%in% colnames(file_path){
-    print("!!!WARNING!!! the selected column does not exist!")
-  } else if {
-    class(file_path[,selected_col[i]]) %in% c(is.factor(class), is.character(class) )
-  }
+if (validate_col(loaded_data, selected_col)) {
+  print("Proceeding to randomization...")
 }
 ```
+***
 # Randomization Algorithm
 
 ```{r randomization}
 set.seed(123)
 
 ```
-
+***
 # Results
 
-```{r Results, echo=FALSE}
+```{r Results}
 ```
