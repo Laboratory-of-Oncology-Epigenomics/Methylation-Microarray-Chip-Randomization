@@ -13,7 +13,7 @@ output:
     df_print: paged
     code_folding: hide
 params:
-  target_cols: ["Estadiamento", "Sexo"] #Change what columns you want to analyze
+  target_cols: ["Estadiamento"] #Change what columns you want to analyze
 ---
 
 ```{r load_library, include=FALSE}
@@ -36,7 +36,7 @@ n_chips <- 1 # How many chips will you need?
 ***
 # Functions
 All of the code's functions reside here.
-```{r functions}
+```{r validate_function}
 validate_col <- function(file, target_col) {
   if (!(target_col %in% colnames(file))) {
     stop(paste("!!!ERROR!!! The selected column", target_col, "not found"))
@@ -94,3 +94,18 @@ set.seed(123)
 
 ```{r Results}
 ```
+
+```{r}
+# Teste com Estadiamento
+class(loaded_data$Estadiamento)
+typeof(loaded_data$Estadiamento)
+
+# Teste com Sexo
+class(loaded_data$Sexo)
+typeof(loaded_data$Sexo)
+
+# Se você tiver uma coluna numérica (ex: Idade)
+class(loaded_data$Idade)  # ajuste o nome se for diferente
+typeof(loaded_data$Idade)
+```
+
