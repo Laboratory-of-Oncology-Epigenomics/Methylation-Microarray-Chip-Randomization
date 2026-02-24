@@ -56,19 +56,19 @@ chip_cols <- 6L   # columns per chip (e.g. 6 for the Illumina EPIC array)
 # Name of the column that stores the tissue-type label (e.g. "CPT" or "CPN").
 # Used to enforce the vertical and horizontal constraints.
 # Set to NULL if your data has no tissue-type distinction.
-tissue_col <- "Tissue_Type"
+tissue_col <- NULL
 
 # ── 4. Pairing column ─────────────────────────────────────────────────────────
 # Name of the column that links a tumour to its matched normal (e.g. a patient
 # ID).  All samples that share the same value are placed in the SAME column.
 # Set to NULL if you have no paired samples.
-pair_col <- "Patient_ID"
+pair_col <- "Paired_ID"
 
 # ── 5. Stratification variables ───────────────────────────────────────────────
 # Vector of column names whose categories you want balanced across chips.
-# Example: c("Stage", "Sex") keeps the same proportion of every staging
+# Example: c("Staging", "Sex") keeps the same proportion of every staging
 # category and every sex value on each chip.
-stratify_cols <- c("Stage")
+stratify_cols <- c("Staging", "Age", "Sex")
 
 # ── 6. Reproducibility ────────────────────────────────────────────────────────
 # Change this number to obtain a different valid randomization.
