@@ -554,9 +554,16 @@ if (!is.null(color_col)) {
 ## Proportion of Each Category per Chip
 
 ```{r plot_proportion_per_chip, fig.width = 9, fig.height = 4}
-# One stacked bar chart per stratification variable.
-# X-axis = chip number; Y-axis = proportion of each category.
-for (col in stratify_cols) {
+# Build the list of variables to visualise: tissue type + all stratification
+# variables (duplicates removed, NULL values ignored).
+cols_to_plot <- unique(c(
+  if (!is.null(tissue_col)) tissue_col,
+  stratify_cols
+))
+
+# One stacked bar chart per variable.
+# X-axis = chip number; Y-axis = proportion of each category on that chip.
+for (col in cols_to_plot) {
   if (!(col %in% names(randomized_data))) next
 
   prop_chip <- randomized_data %>%
@@ -587,10 +594,11 @@ for (col in stratify_cols) {
 ## Proportion of Each Category per Row Position
 
 ```{r plot_proportion_per_row, fig.width = 9, fig.height = 4}
-# One stacked bar chart per stratification variable.
+# One stacked bar chart per variable.
 # X-axis = row position (1 … chip_rows); Y-axis = proportion aggregated
-# across all chips — shows whether any row position is biased.
-for (col in stratify_cols) {
+# across all chips — shows whether any row position is biased toward a
+# particular category.
+for (col in cols_to_plot) {
   if (!(col %in% names(randomized_data))) next
 
   prop_row <- randomized_data %>%
@@ -609,6 +617,41 @@ for (col in stratify_cols) {
     labs(
       title = paste("Proportion of", col, "per Row Position (all chips)"),
       x     = "Row",
+      y     = "Proportion"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+  print(p)
+}
+```
+
+## Proportion of Each Category per Column Position
+
+```{r plot_proportion_per_col, fig.width = 9, fig.height = 4}
+# One stacked bar chart per variable.
+# X-axis = column position (1 … chip_cols); Y-axis = proportion aggregated
+# across all chips — shows whether any column position is biased toward a
+# particular category.
+for (col in cols_to_plot) {
+  if (!(col %in% names(randomized_data))) next
+
+  prop_col <- randomized_data %>%
+    filter(!is.na(.data[[col]])) %>%
+    count(chip_col, .data[[col]]) %>%
+    group_by(chip_col) %>%
+    mutate(proportion = n / sum(n)) %>%
+    ungroup()
+
+  p <- ggplot(prop_col,
+              aes(x = factor(chip_col), y = proportion,
+                  fill = factor(.data[[col]]))) +
+    geom_bar(stat = "identity", position = "fill") +
+    scale_y_continuous(labels = percent_format(accuracy = 1)) +
+    scale_fill_brewer(palette = "Set2", name = col) +
+    labs(
+      title = paste("Proportion of", col, "per Column Position (all chips)"),
+      x     = "Column",
       y     = "Proportion"
     ) +
     theme_minimal(base_size = 12) +
