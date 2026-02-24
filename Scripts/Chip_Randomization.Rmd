@@ -223,35 +223,93 @@ count_h_violations <- function(tissue_matrix) {
 # ─────────────────────────────────────────────────────────────────────────────
 # build_stratified_order()
 #
-# Returns row indices of a data frame in a "round-robin" order that distributes
-# the categories of one variable as evenly as possible:
-#   take one sample from category A, one from B, one from C, repeat.
+# Returns row indices of a data frame ordered so that each chip-sized block
+# contains a PROPORTIONAL representation of every category in stratify_col.
+#
+# How it works (chip-by-chip largest-remainder allocation):
+#   1. Shuffle each category's indices independently.
+#   2. For each chip, compute the ideal number of samples per category:
+#        ideal = proportion_of_category * spots_this_chip
+#   3. Round to integers using the largest-remainder method (minimises bias).
+#   4. Clamp to the number actually remaining in each category queue.
+#   5. Shuffle the selected samples within the chip.
+#   6. Repeat until all samples are assigned.
+#
+# This guarantees that even categories with very different sizes are represented
+# proportionally on every chip — unlike a simple round-robin, which exhausts
+# small categories early and leaves later chips dominated by one category.
 #
 # Arguments:
-#   df           : data frame of samples
-#   stratify_col : column name to stratify by (character or NULL)
+#   df             : data frame of samples
+#   stratify_col   : column name to stratify by (character or NULL)
+#   spots_per_chip : number of spots per chip (integer); determines block size
 #
 # Returns: integer vector of row indices.
 # ─────────────────────────────────────────────────────────────────────────────
-build_stratified_order <- function(df, stratify_col = NULL) {
-  if (is.null(stratify_col) || !(stratify_col %in% names(df))) {
-    return(sample(nrow(df)))
+build_stratified_order <- function(df, stratify_col = NULL,
+                                   spots_per_chip = Inf) {
+  n <- nrow(df)
+  if (n == 0L) return(integer(0L))
+  if (is.null(stratify_col) || !(stratify_col %in% names(df)) ||
+      !is.finite(spots_per_chip)) {
+    return(sample(n))
   }
 
-  # Shuffle row indices within each category, then interleave categories
-  category_indices <- df %>%
+  # Build a per-category queue of shuffled row indices and record proportions
+  by_cat <- df %>%
     mutate(.idx = row_number()) %>%
     group_by(.data[[stratify_col]]) %>%
-    summarise(indices = list(sample(.idx)), .groups = "drop") %>%
-    pull(indices)
+    summarise(indices = list(sample(.idx)), count = n(), .groups = "drop")
 
-  max_len <- max(vapply(category_indices, length, integer(1L)))
-  result  <- integer(0L)
-  for (i in seq_len(max_len)) {
-    for (cat_idx in category_indices) {
-      if (i <= length(cat_idx)) result <- c(result, cat_idx[i])
+  prop            <- by_cat$count / n   # proportion of each category in the dataset
+  queues          <- by_cat$indices      # per-category queues of shuffled row indices
+  result          <- integer(0L)
+  spots_int       <- as.integer(spots_per_chip)  # convert once, outside the loop
+
+  while (TRUE) {
+    remaining  <- vapply(queues, length, integer(1L))
+    total_left <- sum(remaining)
+    if (total_left == 0L) break
+
+    chip_size <- min(spots_int, total_left)
+
+    # ── Largest-remainder proportional allocation ─────────────────────────
+    raw   <- prop * chip_size
+    alloc <- floor(raw)
+    gap   <- chip_size - sum(alloc)
+    if (gap > 0L) {
+      # guard: gap <= n_categories by construction, but be explicit
+      n_cats     <- length(alloc)
+      top        <- order(raw - alloc, decreasing = TRUE)[seq_len(min(gap, n_cats))]
+      alloc[top] <- alloc[top] + 1L
     }
+
+    # Clamp to what is actually available in each queue
+    alloc <- pmin(alloc, remaining)
+
+    # Redistribute any shortfall (caused by clamping) — loop until resolved
+    gap2 <- chip_size - sum(alloc)
+    while (gap2 > 0L) {
+      can_give <- which(remaining - alloc > 0L)
+      if (length(can_give) == 0L) break        # all categories exhausted
+      extra        <- head(can_give, gap2)
+      alloc[extra] <- alloc[extra] + 1L
+      gap2         <- chip_size - sum(alloc)
+    }
+    # ─────────────────────────────────────────────────────────────────────
+
+    # Draw from each category's queue and shuffle within this chip's block
+    chip_indices <- integer(0L)
+    for (i in seq_along(queues)) {
+      take <- alloc[i]
+      if (take > 0L) {
+        chip_indices <- c(chip_indices, queues[[i]][seq_len(take)])
+        queues[[i]]  <- queues[[i]][-seq_len(take)]
+      }
+    }
+    result <- c(result, sample(chip_indices))
   }
+
   result
 }
 ```
@@ -293,10 +351,12 @@ if (!is.null(pair_col) && pair_col %in% names(data)) {
 }
 
 # ── Step 3: Stratify the unpaired samples ────────────────────────────────────
-# Round-robin ordering across the first stratification variable spreads
-# categories evenly as columns/chips are filled sequentially.
+# Chip-by-chip proportional allocation: each chip-sized block in the queue
+# contains the same proportion of every category as the full dataset.
+# This prevents minor categories from being exhausted early (which would
+# leave later chips dominated by the largest category).
 strat_col       <- if (length(stratify_cols) > 0L) stratify_cols[1L] else NULL
-strat_order     <- build_stratified_order(unpaired_data, strat_col)
+strat_order     <- build_stratified_order(unpaired_data, strat_col, spots_per_chip)
 unpaired_sorted <- unpaired_data[strat_order, ]
 
 # ── Step 4: Build column-assignment lists ─────────────────────────────────────
