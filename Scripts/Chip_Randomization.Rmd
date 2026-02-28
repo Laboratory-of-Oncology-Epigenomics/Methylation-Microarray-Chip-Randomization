@@ -1,111 +1,653 @@
 ---
-title: "Methylation Micrroarray Randomization"
+title: "Methylation Microarray Chip Randomization"
 author: "Samuel Prates dos Santos"
-date: "29/01/2026"
-output: 
+date: "`r Sys.Date()`"
+output:
   html_document:
     toc: true
-    toc_depth: 2
+    toc_depth: 3
     toc_float: true
     number_sections: true
     theme: darkly
     highlight: zenburn
     df_print: paged
-    code_folding: hide
-params:
-  target_cols: ["Estadiamento"] #Change what columns you want to analyze
+    code_folding: show
 ---
 
-```{r load_library, include=FALSE}
-library(readxl)
-library(tidyverse)
-library(ggplot2)
-library(gridExtra)
+# Introduction
+
+This R Markdown document performs a **stratified randomization** of biological
+samples across methylation microarray chips.  It is designed to work with
+**any Excel spreadsheet** — just update the [Configuration](#configuration)
+section to match your file.
+
+The algorithm enforces four guarantees:
+
+1. **Paired tissues** (e.g., a tumour *CPT* and its matched adjacent normal
+   *CPN* from the same patient) are placed in the **same chip column**.
+2. **Vertical constraint**: within each column the tissue type of the sample
+   at row 1 and the tissue type of the sample at the last row are
+   **different**.
+3. **Horizontal constraint**: for every row, no two horizontally adjacent
+   samples (neighbouring columns) share the **same tissue type**.
+4. **Stratified balance**: every variable you list in `stratify_cols` is
+   distributed **proportionally** across all chips.
+
+---
+
+# Configuration {#configuration}
+
+> ✏️ **Edit only this chunk** to adapt the script to your spreadsheet.
+
+```{r configuration, message = FALSE}
 library(here)
-```
-# Configuration
 
-```{r setup}
-# File's path (change if necessary)
-file_path <- here("Spreadsheets", "Metiloma_CP_PlanilhaINCA.xlsx") # The order is Folder name + File name
-selected_cols <- params$target_cols # Choose what column you want selected
-chip_cols <- 6 # How many columns will your chip have?
-chip_rows <- 8 # How many rows will your chip have?
-n_chips <- 1 # How many chips will you need?
-```
-***
-# Functions
-All of the code's functions reside here.
-```{r validate_function}
-validate_col <- function(file, target_col) {
-  if (!(target_col %in% colnames(file))) {
-    stop(paste("!!!ERROR!!! The selected column", target_col, "not found"))
-  }
-col_type <- class(file[[target_col]])
-if (any(col_type %in% c("character", "factor"))) {
-  message(paste("-SUCCESS-", target_col, "is a valid categorical column"))
-  return = TRUE
-} else {
-  warning(paste("!!!WARNING!!!", target_col, "is", col_type, "- expected character or factor"))
-  return = FALSE
-}
-}
+# ── 1. File path ──────────────────────────────────────────────────────────────
+# ** IMPORTANT: replace "your_file.xlsx" with your actual file name. **
+# Build the path relative to the project root with here().
+# Switch to read.csv(file_path) in the data-loading chunk if using a CSV file.
+file_path <- here("Spreadsheets", "teste.xlsx")
+
+# ── 2. Chip dimensions ────────────────────────────────────────────────────────
+chip_rows <- 8L   # rows per chip   (e.g. 8 for the Illumina EPIC array)
+chip_cols <- 6L   # columns per chip (e.g. 6 for the Illumina EPIC array)
+
+# ── 3. Tissue-type column ─────────────────────────────────────────────────────
+# Name of the column that stores the tissue-type label (e.g. "CPT" or "CPN").
+# Used to enforce the vertical and horizontal constraints.
+# Set to NULL if your data has no tissue-type distinction.
+tissue_col <- "Tissue_Type"
+
+# ── 4. Pairing column ─────────────────────────────────────────────────────────
+# Name of the column that links a tumour to its matched normal (e.g. a patient
+# ID).  All samples that share the same value are placed in the SAME column.
+# Set to NULL if you have no paired samples.
+pair_col <- "Paired"
+
+# ── 5. Stratification variables ───────────────────────────────────────────────
+# Vector of column names whose categories you want balanced across chips.
+# Example: c("Stage", "Sex") keeps the same proportion of every staging
+# category and every sex value on each chip.
+stratify_cols <- c("Staging")
+
+# ── 6. Reproducibility ────────────────────────────────────────────────────────
+# Change this number to obtain a different valid randomization.
+seed <- 123L
 ```
 
-***
+---
+
+# Libraries
+
+```{r libraries, message = FALSE, warning = FALSE}
+library(readxl)    # read Excel files
+library(tidyverse) # dplyr, tidyr, stringr, purrr, ggplot2 …
+library(ggplot2)   # plots
+library(gridExtra) # arrange multiple plots side by side
+library(scales)    # percent labels on axes
+library(here)      # portable file paths
+```
+
+---
+
 # Data Loading
 
 ```{r data_loading}
-loaded_data <- read_excel(file_path)
+# read_excel() loads the first sheet of the workbook.
+# Replace with read.csv(file_path) if your data is a CSV file.
+if (!file.exists(file_path)) {
+  stop(
+    "File not found: ", file_path,
+    "\n  -> Open the Configuration chunk and set file_path to your spreadsheet."
+  )
+}
+data_raw <- read_excel(file_path)
+
+cat("Dimensions  :", nrow(data_raw), "rows x", ncol(data_raw), "columns\n")
+cat("Column names:", paste(names(data_raw), collapse = ", "), "\n\n")
+head(data_raw)
 ```
-***
-## Calculations
-```{r calculations}
+
+---
+
+# Data Exploration
+
+```{r data_exploration}
+# ── Tissue-type distribution ──────────────────────────────────────────────────
+if (!is.null(tissue_col) && tissue_col %in% names(data_raw)) {
+  cat("=== Distribution of '", tissue_col, "' ===\n", sep = "")
+  print(table(data_raw[[tissue_col]], useNA = "ifany"))
+  cat("\n")
+}
+
+# ── Stratification-variable distributions ─────────────────────────────────────
+for (col in stratify_cols) {
+  if (col %in% names(data_raw)) {
+    cat("=== Distribution of '", col, "' ===\n", sep = "")
+    print(table(data_raw[[col]], useNA = "ifany"))
+    cat("\n")
+  } else {
+    warning("Column '", col, "' not found. Check your stratify_cols setting.")
+  }
+}
+
+# ── Chip-capacity summary ─────────────────────────────────────────────────────
 spots_per_chip <- chip_rows * chip_cols
-total_samples <- nrow(loaded_data)
-num_of_chips_needed <- ceiling(total_samples / spots_per_chip)
-empty_spots <- (num_of_chips_needed * spots_per_chip) - total_samples
+n_samples      <- nrow(data_raw)
+n_chips        <- ceiling(n_samples / spots_per_chip)
+n_empty        <- n_chips * spots_per_chip - n_samples
 
-# Uncomment these lines if you want these informations in your doc
-# message(paste("Total amount of samples:", total_samples))
-# message(paste("Spots per chip:", spots_per_chip))
-message(paste("The randomization will consider", num_of_chips_needed,"chips"))
-
-message(paste("!!!ATTENTION!!! Your last chip will have", empty_spots, "empty spots"))
-
+cat("=== Chip Capacity Summary ===\n")
+cat("Samples                 :", n_samples,      "\n")
+cat("Spots per chip          :", spots_per_chip, "\n")
+cat("Chips needed            :", n_chips,        "\n")
+if (n_empty > 0L) cat("Empty spots (last chip) :", n_empty, "\n")
 ```
-***
-# Data Wrangling
 
-```{r data_wrangling}
-if (validate_col(loaded_data, selected_col)) {
-  print("Proceeding to randomization...")
+---
+
+# Randomization
+
+## Helper Functions
+
+```{r helper_functions}
+# ─────────────────────────────────────────────────────────────────────────────
+# order_column_samples()
+#
+# Shuffles a set of sample IDs so that the tissue type at position 1 differs
+# from the tissue type at the last position — the VERTICAL constraint.
+#
+# Arguments:
+#   sample_ids : integer vector of row IDs for this column
+#   tissues    : character vector of tissue types (same length as sample_ids)
+#   max_tries  : maximum number of random shuffles before the fallback
+#
+# Returns: sample_ids reordered to satisfy (or approximate) the constraint.
+# ─────────────────────────────────────────────────────────────────────────────
+order_column_samples <- function(sample_ids, tissues, max_tries = 2000L) {
+  n <- length(sample_ids)
+  if (n <= 1L) return(sample_ids)
+
+  # If every tissue is identical the constraint is impossible; just shuffle.
+  if (length(unique(na.omit(tissues))) <= 1L) return(sample(sample_ids))
+
+  for (attempt in seq_len(max_tries)) {
+    perm    <- sample(n)
+    t_first <- tissues[perm[1L]]
+    t_last  <- tissues[perm[n]]
+    if (is.na(t_first) || is.na(t_last) || t_first != t_last) {
+      return(sample_ids[perm])
+    }
+  }
+
+  # Guaranteed fallback: swap the last position with the first element that
+  # has a different tissue type from position 1.
+  perm     <- sample(n)
+  t_first  <- tissues[perm[1L]]
+  diff_pos <- which(tissues[perm] != t_first & !is.na(tissues[perm]))
+  if (length(diff_pos) > 0L) {
+    swap           <- diff_pos[length(diff_pos)]
+    perm[c(swap, n)] <- perm[c(n, swap)]
+  }
+
+  warning("Vertical constraint could not be satisfied after ", max_tries,
+          " tries. Returning best approximation.")
+  sample_ids[perm]
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# count_h_violations()
+#
+# Counts pairs of horizontally adjacent cells (same row, neighbouring columns)
+# that share the same non-NA tissue type — violations of the HORIZONTAL
+# constraint.
+#
+# Arguments:
+#   tissue_matrix : character matrix [chip_rows x chip_cols]
+#
+# Returns: integer count of violations.
+# ─────────────────────────────────────────────────────────────────────────────
+count_h_violations <- function(tissue_matrix) {
+  if (ncol(tissue_matrix) < 2L) return(0L)
+  count <- 0L
+  for (r in seq_len(nrow(tissue_matrix))) {
+    for (c in seq_len(ncol(tissue_matrix) - 1L)) {
+      t1 <- tissue_matrix[r, c]
+      t2 <- tissue_matrix[r, c + 1L]
+      if (!is.na(t1) && !is.na(t2) && t1 == t2) count <- count + 1L
+    }
+  }
+  count
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# build_stratified_order()
+#
+# Returns row indices of a data frame in a "round-robin" order that distributes
+# the categories of one variable as evenly as possible:
+#   take one sample from category A, one from B, one from C, repeat.
+#
+# Arguments:
+#   df           : data frame of samples
+#   stratify_col : column name to stratify by (character or NULL)
+#
+# Returns: integer vector of row indices.
+# ─────────────────────────────────────────────────────────────────────────────
+build_stratified_order <- function(df, stratify_col = NULL) {
+  if (is.null(stratify_col) || !(stratify_col %in% names(df))) {
+    return(sample(nrow(df)))
+  }
+
+  # Shuffle row indices within each category, then interleave categories
+  category_indices <- df %>%
+    mutate(.idx = row_number()) %>%
+    group_by(.data[[stratify_col]]) %>%
+    summarise(indices = list(sample(.idx)), .groups = "drop") %>%
+    pull(indices)
+
+  max_len <- max(vapply(category_indices, length, integer(1L)))
+  result  <- integer(0L)
+  for (i in seq_len(max_len)) {
+    for (cat_idx in category_indices) {
+      if (i <= length(cat_idx)) result <- c(result, cat_idx[i])
+    }
+  }
+  result
 }
 ```
-***
-# Randomization Algorithm
+
+## Main Algorithm
 
 ```{r randomization}
-set.seed(123)
+set.seed(seed)
 
+# ── Step 1: Add an internal row identifier ────────────────────────────────────
+data <- data_raw %>% mutate(.sid = row_number())
+
+# ── Step 2: Separate paired from unpaired samples ────────────────────────────
+if (!is.null(pair_col) && pair_col %in% names(data)) {
+
+  pair_counts     <- data %>%
+    filter(!is.na(.data[[pair_col]])) %>%
+    count(.data[[pair_col]], name = "n")
+
+  paired_patients <- pair_counts %>%
+    filter(n > 1L) %>%
+    pull(1)   # pull the actual pair_col values (e.g. patient IDs)
+
+  paired_data   <- data %>% filter(.data[[pair_col]] %in% paired_patients)
+  unpaired_data <- data %>%
+    filter(!(.data[[pair_col]] %in% paired_patients) |
+             is.na(.data[[pair_col]]))
+
+  cat("Paired samples   :", nrow(paired_data),
+      "(from", length(paired_patients), "patients)\n")
+  cat("Unpaired samples :", nrow(unpaired_data), "\n")
+
+} else {
+  paired_data     <- data[0L, ]
+  unpaired_data   <- data
+  paired_patients <- character(0L)
+  cat("No pairing column — all", nrow(unpaired_data),
+      "samples treated as unpaired.\n")
+}
+
+# ── Step 3: Stratify the unpaired samples ────────────────────────────────────
+# Round-robin ordering across the first stratification variable spreads
+# categories evenly as columns/chips are filled sequentially.
+strat_col       <- if (length(stratify_cols) > 0L) stratify_cols[1L] else NULL
+strat_order     <- build_stratified_order(unpaired_data, strat_col)
+unpaired_sorted <- unpaired_data[strat_order, ]
+
+# ── Step 4: Build column-assignment lists ─────────────────────────────────────
+# col_assign[[chip_i]][[col_j]] holds the .sid values assigned to that column.
+col_assign <- lapply(seq_len(n_chips), function(i) {
+  lapply(seq_len(chip_cols), function(j) integer(0L))
+})
+
+chip_i <- 1L
+col_j  <- 1L
+
+# Helper: advance the (chip, column) pointer to the next column
+advance_pointer <- function() {
+  col_j  <<- col_j + 1L
+  if (col_j > chip_cols) {
+    col_j  <<- 1L
+    chip_i <<- chip_i + 1L
+  }
+}
+
+# 4a. Place paired groups first so CPT + CPN share a column
+if (length(paired_patients) > 0L) {
+  for (patient in sample(paired_patients)) {
+    group_sids <- paired_data %>%
+      filter(.data[[pair_col]] == patient) %>%
+      pull(.sid)
+    n_group <- length(group_sids)
+
+    # Skip to the next column if the current one cannot fit the whole group
+    while (chip_i <= n_chips &&
+           length(col_assign[[chip_i]][[col_j]]) + n_group > chip_rows) {
+      advance_pointer()
+    }
+    if (chip_i > n_chips) {
+      warning("Not enough chip space for all paired groups!")
+      break
+    }
+    col_assign[[chip_i]][[col_j]] <-
+      c(col_assign[[chip_i]][[col_j]], group_sids)
+  }
+}
+
+# 4b. Fill remaining spots with (stratified) unpaired samples
+unpaired_queue <- unpaired_sorted$.sid
+queue_idx      <- 1L
+
+for (ci in seq_len(n_chips)) {
+  for (cj in seq_len(chip_cols)) {
+    free <- chip_rows - length(col_assign[[ci]][[cj]])
+    while (free > 0L && queue_idx <= length(unpaired_queue)) {
+      col_assign[[ci]][[cj]] <-
+        c(col_assign[[ci]][[cj]], unpaired_queue[queue_idx])
+      queue_idx <- queue_idx + 1L
+      free      <- free - 1L
+    }
+  }
+}
+
+# ── Step 5: Order samples within each column — vertical constraint ────────────
+for (ci in seq_len(n_chips)) {
+  for (cj in seq_len(chip_cols)) {
+    sids <- col_assign[[ci]][[cj]]
+    if (length(sids) == 0L) next
+
+    if (!is.null(tissue_col) && tissue_col %in% names(data)) {
+      tissues              <- data[[tissue_col]][match(sids, data$.sid)]
+      col_assign[[ci]][[cj]] <- order_column_samples(sids, tissues)
+    } else {
+      col_assign[[ci]][[cj]] <- sample(sids)
+    }
+  }
+}
+
+# ── Step 6: Optimise column order per chip — horizontal constraint ─────────────
+# Try random column permutations and keep the one with the fewest row-wise
+# adjacent tissue-type violations (300 trials per chip).
+if (!is.null(tissue_col) && tissue_col %in% names(data)) {
+  for (ci in seq_len(n_chips)) {
+
+    build_tissue_matrix <- function(perm) {
+      mat <- matrix(NA_character_, nrow = chip_rows, ncol = chip_cols)
+      for (j in seq_len(chip_cols)) {
+        sids <- col_assign[[ci]][[perm[j]]]
+        if (length(sids) > 0L) {
+          ts <- data[[tissue_col]][match(sids, data$.sid)]
+          mat[seq_along(ts), j] <- ts
+        }
+      }
+      mat
+    }
+
+    best_perm  <- seq_len(chip_cols)
+    best_score <- count_h_violations(build_tissue_matrix(best_perm))
+
+    for (trial in seq_len(300L)) {
+      perm  <- sample(chip_cols)
+      score <- count_h_violations(build_tissue_matrix(perm))
+      if (score < best_score) {
+        best_score <- score
+        best_perm  <- perm
+      }
+      if (best_score == 0L) break
+    }
+
+    col_assign[[ci]] <- col_assign[[ci]][best_perm]
+  }
+}
+
+# ── Step 7: Flatten everything into a tidy result data frame ──────────────────
+result_rows <- vector("list", n_chips * chip_cols * chip_rows)
+row_count   <- 0L
+
+for (ci in seq_len(n_chips)) {
+  for (cj in seq_len(chip_cols)) {
+    sids <- col_assign[[ci]][[cj]]
+    for (rk in seq_along(sids)) {
+      row_count <- row_count + 1L
+      result_rows[[row_count]] <- tibble(
+        .sid     = sids[rk],
+        chip_num = ci,
+        chip_row = as.integer(rk),
+        chip_col = as.integer(cj)
+      )
+    }
+  }
+}
+
+chip_layout <- bind_rows(result_rows[seq_len(row_count)])
+
+# Join position information back to the full sample data
+randomized_data <- chip_layout %>%
+  left_join(data, by = ".sid") %>%
+  select(-.sid) %>%
+  arrange(chip_num, chip_col, chip_row)
+
+cat("Randomization complete! Total samples placed:", nrow(randomized_data), "\n")
 ```
-***
+
+## Constraint Validation
+
+```{r validation}
+if (!is.null(tissue_col) && tissue_col %in% names(randomized_data)) {
+
+  # ── Vertical constraint ────────────────────────────────────────────────────
+  vertical_check <- randomized_data %>%
+    group_by(chip_num, chip_col) %>%
+    arrange(chip_row, .by_group = TRUE) %>%
+    summarise(
+      first_tissue = first(.data[[tissue_col]]),
+      last_tissue  = last(.data[[tissue_col]]),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      violation = !is.na(first_tissue) & !is.na(last_tissue) &
+                   first_tissue == last_tissue
+    )
+
+  n_vert <- sum(vertical_check$violation)
+  if (n_vert == 0L) {
+    cat("Vertical constraint   : No violations\n")
+  } else {
+    cat("Vertical constraint   :", n_vert, "violation(s)\n")
+    print(vertical_check %>% filter(violation))
+  }
+
+  # ── Horizontal constraint ──────────────────────────────────────────────────
+  horiz_check <- randomized_data %>%
+    group_by(chip_num, chip_row) %>%
+    arrange(chip_col, .by_group = TRUE) %>%
+    summarise(tissues = list(.data[[tissue_col]]), .groups = "drop") %>%
+    rowwise() %>%
+    mutate(
+      n_violations = {
+        ts <- unlist(tissues)
+        if (length(ts) < 2L) 0L
+        else sum(ts[-length(ts)] == ts[-1L] &
+                 !is.na(ts[-length(ts)]) & !is.na(ts[-1L]),
+                 na.rm = TRUE)
+      }
+    ) %>%
+    ungroup()
+
+  n_horiz <- sum(horiz_check$n_violations)
+  if (n_horiz == 0L) {
+    cat("Horizontal constraint : No violations\n")
+  } else {
+    cat("Horizontal constraint :", n_horiz, "adjacent violation(s)\n")
+    print(horiz_check %>% filter(n_violations > 0L) %>% select(-tissues))
+  }
+}
+
+# ── Pairing constraint ─────────────────────────────────────────────────────────
+if (!is.null(pair_col) && pair_col %in% names(randomized_data) &&
+    length(paired_patients) > 0L) {
+
+  pair_check <- randomized_data %>%
+    filter(.data[[pair_col]] %in% paired_patients) %>%
+    group_by(chip_num, .data[[pair_col]]) %>%
+    summarise(n_cols = n_distinct(chip_col), .groups = "drop") %>%
+    filter(n_cols > 1L)
+
+  if (nrow(pair_check) == 0L) {
+    cat("Pairing constraint    : All paired samples in the same column\n")
+  } else {
+    cat("Pairing constraint    :", nrow(pair_check), "violation(s)\n")
+    print(pair_check)
+  }
+}
+```
+
+---
+
+# Visualisation
+
+## Chip Layout Grid
+
+```{r plot_chip_layout, fig.width = 12, fig.height = 5}
+# Colour-code each cell by tissue type (or by the first stratification variable
+# if no tissue_col is set).
+color_col <- if (!is.null(tissue_col) && tissue_col %in% names(randomized_data)) {
+  tissue_col
+} else if (length(stratify_cols) > 0L &&
+           stratify_cols[1L] %in% names(randomized_data)) {
+  stratify_cols[1L]
+} else {
+  NULL
+}
+
+if (!is.null(color_col)) {
+  chip_plots <- lapply(seq_len(n_chips), function(ci) {
+    chip_data <- randomized_data %>%
+      filter(chip_num == ci) %>%
+      mutate(
+        chip_row = factor(chip_row, levels = rev(seq_len(chip_rows))),
+        chip_col = factor(chip_col, levels = seq_len(chip_cols))
+      )
+
+    ggplot(chip_data,
+           aes(x = chip_col, y = chip_row, fill = .data[[color_col]])) +
+      geom_tile(colour = "white", linewidth = 1.2) +
+      scale_fill_brewer(palette = "Set2", na.value = "grey70",
+                        name = color_col) +
+      labs(title = paste("Chip", ci), x = "Column", y = "Row") +
+      theme_minimal(base_size = 11) +
+      theme(
+        plot.title      = element_text(hjust = 0.5, face = "bold"),
+        legend.position = "bottom"
+      )
+  })
+
+  do.call(grid.arrange, c(chip_plots, ncol = min(3L, n_chips)))
+}
+```
+
+## Proportion of Each Category per Chip
+
+```{r plot_proportion_per_chip, fig.width = 9, fig.height = 4}
+# One stacked bar chart per stratification variable.
+# X-axis = chip number; Y-axis = proportion of each category.
+for (col in stratify_cols) {
+  if (!(col %in% names(randomized_data))) next
+
+  prop_chip <- randomized_data %>%
+    filter(!is.na(.data[[col]])) %>%
+    count(chip_num, .data[[col]]) %>%
+    group_by(chip_num) %>%
+    mutate(proportion = n / sum(n)) %>%
+    ungroup()
+
+  p <- ggplot(prop_chip,
+              aes(x = factor(chip_num), y = proportion,
+                  fill = factor(.data[[col]]))) +
+    geom_bar(stat = "identity", position = "fill") +
+    scale_y_continuous(labels = percent_format(accuracy = 1)) +
+    scale_fill_brewer(palette = "Set2", name = col) +
+    labs(
+      title = paste("Proportion of", col, "per Chip"),
+      x     = "Chip",
+      y     = "Proportion"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+  print(p)
+}
+```
+
+## Proportion of Each Category per Row Position
+
+```{r plot_proportion_per_row, fig.width = 9, fig.height = 4}
+# One stacked bar chart per stratification variable.
+# X-axis = row position (1 … chip_rows); Y-axis = proportion aggregated
+# across all chips — shows whether any row position is biased.
+for (col in stratify_cols) {
+  if (!(col %in% names(randomized_data))) next
+
+  prop_row <- randomized_data %>%
+    filter(!is.na(.data[[col]])) %>%
+    count(chip_row, .data[[col]]) %>%
+    group_by(chip_row) %>%
+    mutate(proportion = n / sum(n)) %>%
+    ungroup()
+
+  p <- ggplot(prop_row,
+              aes(x = factor(chip_row), y = proportion,
+                  fill = factor(.data[[col]]))) +
+    geom_bar(stat = "identity", position = "fill") +
+    scale_y_continuous(labels = percent_format(accuracy = 1)) +
+    scale_fill_brewer(palette = "Set2", name = col) +
+    labs(
+      title = paste("Proportion of", col, "per Row Position (all chips)"),
+      x     = "Row",
+      y     = "Proportion"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+  print(p)
+}
+```
+
+---
+
 # Results
 
-```{r Results}
+```{r results}
+cat("=== RANDOMIZATION SUMMARY ===\n")
+cat("Total samples randomized        :", nrow(randomized_data), "\n")
+cat("Number of chips used            :", n_chips,        "\n")
+cat("Spots per chip                  :", spots_per_chip, "\n")
+if (n_empty > 0L) cat("Empty spots on last chip        :", n_empty, "\n")
+
+# Full chip-assignment table (paginated in HTML output)
+randomized_data %>%
+  select(chip_num, chip_col, chip_row, everything()) %>%
+  arrange(chip_num, chip_col, chip_row)
 ```
 
-```{r}
-# Teste com Estadiamento
-class(loaded_data$Estadiamento)
-typeof(loaded_data$Estadiamento)
+---
 
-# Teste com Sexo
-class(loaded_data$Sexo)
-typeof(loaded_data$Sexo)
+# Export
 
-# Se você tiver uma coluna numérica (ex: Idade)
-class(loaded_data$Idade)  # ajuste o nome se for diferente
-typeof(loaded_data$Idade)
+```{r export}
+# Save the chip-assignment table as a CSV file in the Spreadsheets/ folder.
+# The file name includes today's date so repeated runs do not overwrite each
+# other.
+output_path <- here(
+  "Results",
+  paste0("Randomized_Chips_", format(Sys.time(), "%Y-%m-%d_%H-%M-%S"), ".csv")
+)
+
+write.csv(randomized_data, output_path, row.names = FALSE)
+cat("Results saved to:", output_path, "\n")
 ```
-

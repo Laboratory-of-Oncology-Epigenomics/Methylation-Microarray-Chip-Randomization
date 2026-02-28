@@ -1,6 +1,9 @@
 # Ignora as planilhas com dados de pacientes do INCA
 Spreadsheets/*.xlsx
 Spreadsheets/*.csv
+Results/*.csv
+Results/*.xlsx
+
 *.idat
 *.RData
 *.Rhistory
